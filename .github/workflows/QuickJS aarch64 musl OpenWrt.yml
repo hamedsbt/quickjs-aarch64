@@ -26,10 +26,12 @@ jobs:
           SDK_DIR="$(ls -d openwrt-sdk-* | head -n1)"
           echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
 
-      - name: Clone QuickJS fork
-        run: |
-          git clone --depth 1 --branch ${{ env.QUICKJS_BRANCH }} ${{ env.QUICKJS_REPO }} quickjs
-          echo "QUICKJS_DIR=$PWD/quickjs" >> $GITHUB_ENV
+      - name: Checkout QuickJS fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}   # your current repo
+          path: quickjs                           # directory to clone into
+          ref: main                               # branch to checkout
 
       - name: Setup OpenWrt toolchain
         run: |
