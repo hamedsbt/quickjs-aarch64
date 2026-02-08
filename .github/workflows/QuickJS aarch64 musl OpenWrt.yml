@@ -1,0 +1,99 @@
+name: Build QuickJS (aarch64 musl OpenWrt)
+
+on:
+  workflow_dispatch:
+
+env:
+  OPENWRT_SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/bcm27xx/bcm2711/openwrt-sdk-24.10.5-bcm27xx-bcm2711_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+  QUICKJS_REPO: "https://github.com/your-username/quickjs-aarch64-musl.git"
+  QUICKJS_BRANCH: "main"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Prepare runner
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wget xz-utils zstd build-essential git file
+
+      - name: Download OpenWrt SDK
+        run: |
+          set -euo pipefail
+          wget -q --show-progress "$OPENWRT_SDK_URL" -O openwrt-sdk.tar.zst
+          tar --zstd -xf openwrt-sdk.tar.zst
+          SDK_DIR="$(ls -d openwrt-sdk-* | head -n1)"
+          echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
+
+      - name: Clone QuickJS fork
+        run: |
+          git clone --depth 1 --branch ${{ env.QUICKJS_BRANCH }} ${{ env.QUICKJS_REPO }} quickjs
+          echo "QUICKJS_DIR=$PWD/quickjs" >> $GITHUB_ENV
+
+      - name: Setup OpenWrt toolchain
+        run: |
+          set -euo pipefail
+          STAGING="$PWD/${{ env.SDK_DIR }}/staging_dir"
+          TOOLCHAIN=$(find "$STAGING" -maxdepth 1 -type d -name 'toolchain-aarch64*' | head -n1)
+          SYSROOT=$(find "$STAGING" -maxdepth 1 -type d -name 'target-aarch64*' | head -n1)
+          export PATH="$TOOLCHAIN/bin:$PATH"
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+
+      - name: Create config.h
+        run: |
+          cd "${{ env.QUICKJS_DIR }}"
+          cat > config.h <<'EOF'
+          #ifndef CONFIG_H
+          #define CONFIG_H
+          #define CONFIG_VERSION "0"
+          #endif
+          EOF
+
+      - name: Build QuickJS (cross-compile)
+        run: |
+          cd "${{ env.QUICKJS_DIR }}"
+          rm -rf .obj *.o *.a qjs qjsc libquickjs.a || true
+
+          CROSS_CC="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-gcc"
+          CROSS_AR="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-ar"
+          CROSS_RANLIB="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-ranlib"
+          CROSS_STRIP="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip"
+
+          CPPFLAGS="-I${{ env.SYSROOT }}/usr/include -I. -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
+          CFLAGS="--sysroot=${{ env.SYSROOT }} -Os -pipe -ffunction-sections -fdata-sections"
+          LDFLAGS="--sysroot=${{ env.SYSROOT }} -Wl,--gc-sections"
+
+          echo "Using CROSS_CC=${CROSS_CC}"
+          $CROSS_CC --version
+
+          # Build library
+          make -j$(nproc) CC="$CROSS_CC" AR="$CROSS_AR" RANLIB="$CROSS_RANLIB" STRIP="$CROSS_STRIP" \
+            CPPFLAGS="$CPPFLAGS" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" libquickjs.a
+
+          # Build executables
+          make -j$(nproc) CC="$CROSS_CC" AR="$CROSS_AR" RANLIB="$CROSS_RANLIB" STRIP="$CROSS_STRIP" \
+            CPPFLAGS="$CPPFLAGS" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" qjs qjsc
+
+          ls -lh qjs qjsc libquickjs.a || true
+
+      - name: Strip and verify
+        run: |
+          cd "${{ env.QUICKJS_DIR }}"
+          "${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip" qjs qjsc || true
+          file qjs qjsc || true
+
+      - name: Package artifacts
+        run: |
+          cd "${{ env.QUICKJS_DIR }}"
+          mkdir -p artifacts
+          cp qjs qjsc libquickjs.a artifacts/
+          printf "QuickJS (aarch64 OpenWrt)\n" > artifacts/README.txt
+          ls -lh artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickjs-openwrt-aarch64
+          path: artifacts/
