@@ -1,122 +1,165 @@
-name: Build QuickJS (aarch64 musl OpenWrt)
+name: Build QuickJS for OpenWrt (bcm2711 / aarch64)
 
 on:
   workflow_dispatch:
 
 env:
   OPENWRT_SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/bcm27xx/bcm2711/openwrt-sdk-24.10.5-bcm27xx-bcm2711_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-  QUICKJS_REPO: "https://github.com/your-username/quickjs-aarch64-musl.git"
-  QUICKJS_BRANCH: "main"
+  QUICKJS_DIR: "quickjs"                # path inside repo where quickjs source lives
+  QUICKJS_VERSION: "2025-09-13"         # informational only
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Prepare runner
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y wget xz-utils zstd build-essential git file
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
+    - name: Install prerequisites
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y wget xz-utils zstd build-essential file python3
 
-      - name: Checkout QuickJS fork
-        uses: actions/checkout@v4
-        with:
-          repository: hamedsbt/quickjs-aarch64
-          ref: master
-          path: quickjs
-          
-      - name: Download OpenWrt SDK
-        run: |
-          set -euo pipefail
-          wget -q --show-progress "$OPENWRT_SDK_URL" -O openwrt-sdk.tar.zst
-          tar --zstd -xf openwrt-sdk.tar.zst
-          SDK_DIR="$(ls -d openwrt-sdk-* | head -n1)"
-          echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
+    - name: Download OpenWrt SDK
+      run: |
+        set -euo pipefail
+        echo "Downloading OpenWrt SDK..."
+        wget --progress=dot:giga "$OPENWRT_SDK_URL" -O openwrt-sdk.tar.zst
+        tar --zstd -xf openwrt-sdk.tar.zst
+        SDK_DIR="$(ls -d openwrt-sdk-* | head -n1)"
+        if [ -z "$SDK_DIR" ]; then
+          echo "ERROR: SDK extraction failed"
+          ls -la
+          exit 1
+        fi
+        echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
+        ls -ld "$SDK_DIR"
 
-      - name: Setup OpenWrt toolchain
-        run: |
-          set -euo pipefail
-          STAGING="$PWD/${{ env.SDK_DIR }}/staging_dir"
-          TOOLCHAIN=$(find "$STAGING" -maxdepth 1 -type d -name 'toolchain-aarch64*' | head -n1)
-          SYSROOT=$(find "$STAGING" -maxdepth 1 -type d -name 'target-aarch64*' | head -n1)
-          export PATH="$TOOLCHAIN/bin:$PATH"
-          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
-          echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+    - name: Configure toolchain & sysroot
+      run: |
+        set -euo pipefail
+        SDK_DIR="${{ env.SDK_DIR }}"
+        STAGING="$PWD/$SDK_DIR/staging_dir"
 
-      - name: Create config.h
-        run: |
-          cd "${{ env.QUICKJS_DIR }}"
-          cat > config.h <<'EOF'
-          #ifndef CONFIG_H
-          #define CONFIG_H
-          #define CONFIG_VERSION "0"
-          #endif
-          EOF
-      
-      - name: Build QuickJS (host qjsc + OpenWrt aarch64)
-        run: |
-          set -euo pipefail
-          cd quickjs
-      
-          cat > config.h <<'EOF'
-          #ifndef CONFIG_H
-          #define CONFIG_H
-          #define CONFIG_VERSION "0"
-          #endif
-          EOF
-      
-          rm -rf .obj *.o *.a qjs qjsc host-qjsc || true
-      
-          # ---- Phase 1: host qjsc ----
-          make -j$(nproc) \
-            CC=gcc \
-            QJSC_CC=gcc \
-            CONFIG_CROSS=y \
-            host-qjsc
-      
-          test -x host-qjsc
-      
-          # ---- Phase 2: target build ----
-          CROSS_PREFIX="${TOOLCHAIN}/bin"
-          CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
-          CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
-          CROSS_RANLIB="${CROSS_PREFIX}/aarch64-openwrt-linux-ranlib"
-          CROSS_STRIP="${CROSS_PREFIX}/aarch64-openwrt-linux-strip"
-      
-          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections \
-                  -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
-          LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
-          CPPFLAGS="-I${SYSROOT}/usr/include -I."
-      
-          make -j$(nproc) \
-            CC="${CROSS_CC}" \
-            AR="${CROSS_AR}" \
-            RANLIB="${CROSS_RANLIB}" \
-            STRIP="${CROSS_STRIP}" \
-            CFLAGS="${CFLAGS}" \
-            CPPFLAGS="${CPPFLAGS}" \
-            LDFLAGS="${LDFLAGS}" \
-            CONFIG_CROSS=y
-      
-          ls -lh qjs qjsc libquickjs.a host-qjsc
+        TOOLCHAIN_DIR="$(find "$STAGING" -maxdepth 1 -type d -name 'toolchain-aarch64*' | head -n1)"
+        SYSROOT_DIR="$(find "$STAGING" -maxdepth 1 -type d -name 'target-aarch64*' | head -n1)"
 
-      - name: Strip and verify
-        run: |
-          cd "${{ env.QUICKJS_DIR }}"
+        if [ -z "$TOOLCHAIN_DIR" ] || [ -z "$SYSROOT_DIR" ]; then
+          echo "ERROR: toolchain or sysroot not found in $STAGING"
+          ls -la "$STAGING" || true
+          exit 1
+        fi
+
+        echo "TOOLCHAIN=$TOOLCHAIN_DIR" >> $GITHUB_ENV
+        echo "SYSROOT=$SYSROOT_DIR" >> $GITHUB_ENV
+        echo "STAGING_DIR=$STAGING" >> $GITHUB_ENV
+
+        # Make toolchain available immediately in this step for verification
+        export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+        aarch64-openwrt-linux-gcc --version || true
+
+    - name: Apply safe local patches & config.h
+      run: |
+        set -euo pipefail
+        cd "${{ env.QUICKJS_DIR }}"
+        # safe ABI fix for signal prototypes
+        sed -i 's/signal(SIGPIPE, SIG_IGN);/signal(SIGPIPE, (void (*)(int))SIG_IGN);/' quickjs-libc.c || true
+        # ensure env declaration
+        grep -q 'extern char \*\*environ;' quickjs-libc.c || sed -i '/#include <stdlib.h>/a extern char **environ;' quickjs-libc.c || true
+
+        # create a small config.h that defines CONFIG_VERSION as a string literal
+        cat > config.h <<'EOF'
+        #ifndef CONFIG_H
+        #define CONFIG_H
+        #define CONFIG_VERSION "0"
+        #endif
+        EOF
+        ls -l config.h
+
+    - name: Phase 1 — build native host qjsc (x86_64)
+      working-directory: ${{ env.QUICKJS_DIR }}
+      run: |
+        set -euo pipefail
+        # Ensure a clean start (upstream Makefile lacks a complete 'make clean')
+        rm -rf .obj *.o *.a qjs qjsc host-qjsc libquickjs.a || true
+
+        # Build qjsc for the runner (native). This produces ./qjsc (x86_64)
+        # Intentionally use CC=gcc so this is a host binary
+        make -j$(nproc) CC=gcc qjsc
+
+        if [ ! -x qjsc ]; then
+          echo "Host qjsc build failed (qjsc not present)"
+          ls -la
+          exit 1
+        fi
+
+        # Create host-qjsc that the cross build will expect as a dependency
+        cp qjsc host-qjsc
+        chmod +x host-qjsc
+        file host-qjsc
+
+    - name: Phase 2 — cross-build for OpenWrt aarch64
+      working-directory: ${{ env.QUICKJS_DIR }}
+      env:
+        TOOLCHAIN: ${{ env.TOOLCHAIN }}
+        SYSROOT: ${{ env.SYSROOT }}
+        STAGING_DIR: ${{ env.STAGING_DIR }}
+      run: |
+        set -euo pipefail
+
+        # Toolchain prefix & absolute paths
+        CROSS_PREFIX="${TOOLCHAIN}/bin"
+        CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
+        CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
+        CROSS_RANLIB="${CROSS_PREFIX}/aarch64-openwrt-linux-ranlib"
+        CROSS_STRIP="${CROSS_PREFIX}/aarch64-openwrt-linux-strip"
+
+        echo "Using CROSS_CC=${CROSS_CC}"
+        "${CROSS_CC}" --version
+
+        # Compose flags: include config.h to avoid CONFIG_VERSION expansion issues
+        CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
+        CPPFLAGS="-I${SYSROOT}/usr/include -I."
+        LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
+
+        # Export STAGING_DIR to reduce GCC warnings (not critical)
+        export STAGING_DIR="${STAGING_DIR}"
+
+        # Cross build: pass QJSC=./host-qjsc so make will use the host tool that already exists
+        make -j$(nproc) \
+          CC="${CROSS_CC}" \
+          AR="${CROSS_AR}" \
+          RANLIB="${CROSS_RANLIB}" \
+          STRIP="${CROSS_STRIP}" \
+          CFLAGS="${CFLAGS}" \
+          CPPFLAGS="${CPPFLAGS}" \
+          LDFLAGS="${LDFLAGS}" \
+          QJSC=./host-qjsc \
+          CONFIG_CROSS=y
+
+        # show results
+        ls -lah qjs qjsc libquickjs.a host-qjsc || true
+        file qjs qjsc host-qjsc || true
+        readelf -h qjs || true
+
+    - name: Strip and package artifacts
+      working-directory: ${{ env.QUICKJS_DIR }}
+      run: |
+        set -euo pipefail
+        # Use cross strip if available
+        if [ -x "${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip" ]; then
           "${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip" qjs qjsc || true
-          file qjs qjsc || true
+        fi
+        mkdir -p artifacts
+        cp -a qjs qjsc libquickjs.a host-qjsc artifacts/ || true
+        printf "QuickJS (built for OpenWrt aarch64)\n" > artifacts/README.txt
+        ls -lh artifacts
 
-      - name: Package artifacts
-        run: |
-          cd "${{ env.QUICKJS_DIR }}"
-          mkdir -p artifacts
-          cp qjs qjsc libquickjs.a artifacts/
-          printf "QuickJS (aarch64 OpenWrt)\n" > artifacts/README.txt
-          ls -lh artifacts
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: quickjs-openwrt-aarch64
-          path: artifacts/
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: quickjs-openwrt-aarch64
+        path: quickjs/artifacts/
