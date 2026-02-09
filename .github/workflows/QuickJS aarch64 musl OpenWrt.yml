@@ -71,7 +71,7 @@ jobs:
         cat > config.h <<'EOF'
         #ifndef CONFIG_H
         #define CONFIG_H
-        #define CONFIG_VERSION "0"
+        #define CONFIG_VERSION "2025-09-13"
         #endif
         EOF
         ls -l config.h
