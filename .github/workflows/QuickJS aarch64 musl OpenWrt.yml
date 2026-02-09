@@ -18,6 +18,14 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y wget xz-utils zstd build-essential git file
 
+
+      - name: Checkout QuickJS fork
+        uses: actions/checkout@v4
+        with:
+          repository: hamedsbt/quickjs-aarch64
+          ref: master
+          path: quickjs
+          
       - name: Download OpenWrt SDK
         run: |
           set -euo pipefail
@@ -25,14 +33,6 @@ jobs:
           tar --zstd -xf openwrt-sdk.tar.zst
           SDK_DIR="$(ls -d openwrt-sdk-* | head -n1)"
           echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
-
-      - name: Checkout QuickJS fork
-        uses: actions/checkout@v4
-        with:
-          repository: hamedsbt/quickjs-aarch64
-          ref: main
-          path: quickjs
-
 
       - name: Setup OpenWrt toolchain
         run: |
