@@ -90,14 +90,13 @@ jobs:
 
         if [ ! -x qjsc ]; then
           echo "Host qjsc build failed"
-          ls -la
           exit 1
         fi
-
-        cp qjsc ../host-qjsc
-        chmod +x ../host-qjsc
-        file ../host-qjsc
-
+        
+        cp qjsc "$GITHUB_WORKSPACE/host-qjsc"
+        chmod +x "$GITHUB_WORKSPACE/host-qjsc"
+        file "$GITHUB_WORKSPACE/host-qjsc"
+        
         cd /
         rm -rf "$HOSTBUILD"
 
