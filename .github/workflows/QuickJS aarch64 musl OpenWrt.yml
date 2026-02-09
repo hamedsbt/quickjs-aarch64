@@ -53,14 +53,12 @@ jobs:
           #define CONFIG_VERSION "0"
           #endif
           EOF
-
-      - name: Build QuickJS (OpenWrt aarch64) — cross-safe
+      
+      - name: Build QuickJS (host qjsc + OpenWrt aarch64)
         run: |
           set -euo pipefail
-      
           cd quickjs
       
-          # config.h (string literal version)
           cat > config.h <<'EOF'
           #ifndef CONFIG_H
           #define CONFIG_H
@@ -68,8 +66,18 @@ jobs:
           #endif
           EOF
       
-          rm -rf .obj *.o *.a qjs qjsc libquickjs.a || true
+          rm -rf .obj *.o *.a qjs qjsc host-qjsc || true
       
+          # ---- Phase 1: host qjsc ----
+          make -j$(nproc) \
+            CC=gcc \
+            QJSC_CC=gcc \
+            CONFIG_CROSS=y \
+            host-qjsc
+      
+          test -x host-qjsc
+      
+          # ---- Phase 2: target build ----
           CROSS_PREFIX="${TOOLCHAIN}/bin"
           CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
           CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
@@ -81,9 +89,6 @@ jobs:
           LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
           CPPFLAGS="-I${SYSROOT}/usr/include -I."
       
-          echo "Using CROSS_CC=${CROSS_CC}"
-          "${CROSS_CC}" --version
-      
           make -j$(nproc) \
             CC="${CROSS_CC}" \
             AR="${CROSS_AR}" \
@@ -92,12 +97,9 @@ jobs:
             CFLAGS="${CFLAGS}" \
             CPPFLAGS="${CPPFLAGS}" \
             LDFLAGS="${LDFLAGS}" \
-            CONFIG_CROSS=y \
-            QJSC=true
+            CONFIG_CROSS=y
       
-          ls -lh qjs qjsc libquickjs.a
-
-
+          ls -lh qjs qjsc libquickjs.a host-qjsc
 
       - name: Strip and verify
         run: |
