@@ -54,41 +54,57 @@ jobs:
           #endif
           EOF
 
-      - name: Build QuickJS (OpenWrt aarch64)
+      - name: Build QuickJS (OpenWrt aarch64) — force config.h inclusion
         run: |
           set -euo pipefail
       
+          # 1) go to source (assumes checkout to 'quickjs')
           cd quickjs
       
-          # sanity
-          pwd
-          ls -l
-          test -f Makefile
+          # 2) create config.h (safe; string literal)
+          cat > config.h <<'EOF'
+          #ifndef CONFIG_H
+          #define CONFIG_H
+          #define CONFIG_VERSION "0"
+          #endif
+          EOF
       
-          rm -rf .obj *.o *.a qjs qjsc || true
+          # 3) cleanup upstream build artifacts
+          rm -rf .obj *.o *.a qjs qjsc libquickjs.a || true
       
-          CROSS_CC="${TOOLCHAIN}/bin/aarch64-openwrt-linux-gcc"
-          CROSS_AR="${TOOLCHAIN}/bin/aarch64-openwrt-linux-ar"
-          CROSS_RANLIB="${TOOLCHAIN}/bin/aarch64-openwrt-linux-ranlib"
-          CROSS_STRIP="${TOOLCHAIN}/bin/aarch64-openwrt-linux-strip"
+          # 4) toolchain paths (provided by earlier steps)
+          CROSS_PREFIX="${TOOLCHAIN}/bin"
+          CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
+          CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
+          CROSS_RANLIB="${CROSS_PREFIX}/aarch64-openwrt-linux-ranlib"
+          CROSS_STRIP="${CROSS_PREFIX}/aarch64-openwrt-linux-strip"
       
-          CPPFLAGS="-I${SYSROOT}/usr/include -I. -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
-          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections"
+          # 5) sysroot + flags
+          SYSROOT="${SYSROOT}"
+          # IMPORTANT: put -include config.h into CFLAGS so the Makefile's compiler calls definitely see it
+          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
           LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
+          CPPFLAGS="-I${SYSROOT}/usr/include -I."
       
-          echo "Using CROSS_CC=$CROSS_CC"
-          $CROSS_CC --version
+          # 6) sanity
+          echo "Using CROSS_CC=${CROSS_CC}"
+          "${CROSS_CC}" --version || true
+          pwd
+          ls -la | sed -n '1,120p'
+          test -f Makefile || (echo "Makefile not found" && exit 1)
       
+          # 7) build (pass the cross tools and flags on the make command line)
           make -j$(nproc) \
-            CC="$CROSS_CC" \
-            AR="$CROSS_AR" \
-            RANLIB="$CROSS_RANLIB" \
-            STRIP="$CROSS_STRIP" \
-            CPPFLAGS="$CPPFLAGS" \
-            CFLAGS="$CFLAGS" \
-            LDFLAGS="$LDFLAGS"
+            CC="${CROSS_CC}" \
+            AR="${CROSS_AR}" \
+            RANLIB="${CROSS_RANLIB}" \
+            STRIP="${CROSS_STRIP}" \
+            CFLAGS="${CFLAGS}" \
+            CPPFLAGS="${CPPFLAGS}" \
+            LDFLAGS="${LDFLAGS}"
       
-          ls -lh qjs qjsc libquickjs.a
+          # 8) show artifacts
+          ls -lh qjs qjsc libquickjs.a || true
 
 
       - name: Strip and verify
