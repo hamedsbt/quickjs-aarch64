@@ -30,8 +30,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}   # your current repo
-          path: quickjs                           # directory to clone into
-          ref: main                               # branch to checkout
+          path: quickjs-aarch64                  # directory to clone into
+          ref: main                              # branch to checkout
 
       - name: Setup OpenWrt toolchain
         run: |
