@@ -54,14 +54,13 @@ jobs:
           #endif
           EOF
 
-      - name: Build QuickJS (OpenWrt aarch64) — force config.h inclusion
+      - name: Build QuickJS (OpenWrt aarch64) — cross-safe
         run: |
           set -euo pipefail
       
-          # 1) go to source (assumes checkout to 'quickjs')
           cd quickjs
       
-          # 2) create config.h (safe; string literal)
+          # config.h (string literal version)
           cat > config.h <<'EOF'
           #ifndef CONFIG_H
           #define CONFIG_H
@@ -69,31 +68,22 @@ jobs:
           #endif
           EOF
       
-          # 3) cleanup upstream build artifacts
           rm -rf .obj *.o *.a qjs qjsc libquickjs.a || true
       
-          # 4) toolchain paths (provided by earlier steps)
           CROSS_PREFIX="${TOOLCHAIN}/bin"
           CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
           CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
           CROSS_RANLIB="${CROSS_PREFIX}/aarch64-openwrt-linux-ranlib"
           CROSS_STRIP="${CROSS_PREFIX}/aarch64-openwrt-linux-strip"
       
-          # 5) sysroot + flags
-          SYSROOT="${SYSROOT}"
-          # IMPORTANT: put -include config.h into CFLAGS so the Makefile's compiler calls definitely see it
-          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
+          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections \
+                  -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
           LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
           CPPFLAGS="-I${SYSROOT}/usr/include -I."
       
-          # 6) sanity
           echo "Using CROSS_CC=${CROSS_CC}"
-          "${CROSS_CC}" --version || true
-          pwd
-          ls -la | sed -n '1,120p'
-          test -f Makefile || (echo "Makefile not found" && exit 1)
+          "${CROSS_CC}" --version
       
-          # 7) build (pass the cross tools and flags on the make command line)
           make -j$(nproc) \
             CC="${CROSS_CC}" \
             AR="${CROSS_AR}" \
@@ -102,10 +92,11 @@ jobs:
             CFLAGS="${CFLAGS}" \
             CPPFLAGS="${CPPFLAGS}" \
             LDFLAGS="${LDFLAGS}" \
-            CONFIG_CROSS="y"
+            CONFIG_CROSS=y \
+            QJSC=true
       
-          # 8) show artifacts
-          ls -lh qjs qjsc libquickjs.a || true
+          ls -lh qjs qjsc libquickjs.a
+
 
 
       - name: Strip and verify
