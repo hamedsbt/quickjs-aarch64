@@ -29,9 +29,10 @@ jobs:
       - name: Checkout QuickJS fork
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository }}   # your current repo
-          path: quickjs-aarch64                  # directory to clone into
-          ref: main                              # branch to checkout
+          repository: hamedsbt/quickjs-aarch64
+          ref: main
+          path: quickjs
+
 
       - name: Setup OpenWrt toolchain
         run: |
