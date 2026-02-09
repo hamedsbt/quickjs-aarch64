@@ -102,7 +102,7 @@ jobs:
             CFLAGS="${CFLAGS}" \
             CPPFLAGS="${CPPFLAGS}" \
             LDFLAGS="${LDFLAGS}" \
-            CONFIG_CROSS=y
+            CONFIG_CROSS="y"
       
           # 8) show artifacts
           ls -lh qjs qjsc libquickjs.a || true
