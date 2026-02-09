@@ -5,7 +5,7 @@ on:
 
 env:
   OPENWRT_SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/bcm27xx/bcm2711/openwrt-sdk-24.10.5-bcm27xx-bcm2711_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-  QUICKJS_DIR: "quickjs-aarch64"                # path inside repo where quickjs source lives
+  QUICKJS_DIR: "quickjs"                # path inside repo where quickjs source lives
   QUICKJS_VERSION: "2025-09-13"         # informational only
 
 jobs:
@@ -64,20 +64,22 @@ jobs:
     - name: Apply safe local patches & config.h
       run: |
         set -euo pipefail
-        cd "${{ env.QUICKJS_DIR }}"
-        # safe ABI fix for signal prototypes
+    
+        # already at repo root — no cd needed
+    
         sed -i 's/signal(SIGPIPE, SIG_IGN);/signal(SIGPIPE, (void (*)(int))SIG_IGN);/' quickjs-libc.c || true
-        # ensure env declaration
-        grep -q 'extern char \*\*environ;' quickjs-libc.c || sed -i '/#include <stdlib.h>/a extern char **environ;' quickjs-libc.c || true
-
-        # create a small config.h that defines CONFIG_VERSION as a string literal
+        grep -q 'extern char \*\*environ;' quickjs-libc.c || \
+          sed -i '/#include <stdlib.h>/a extern char **environ;' quickjs-libc.c || true
+    
         cat > config.h <<'EOF'
         #ifndef CONFIG_H
         #define CONFIG_H
         #define CONFIG_VERSION "0"
         #endif
         EOF
+    
         ls -l config.h
+
 
     - name: Phase 1 — build native host qjsc (x86_64)
       working-directory: ${{ env.QUICKJS_DIR }}
