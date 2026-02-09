@@ -54,32 +54,42 @@ jobs:
           #endif
           EOF
 
-      - name: Build QuickJS (cross-compile)
+      - name: Build QuickJS (OpenWrt aarch64)
         run: |
-          cd "${{ env.QUICKJS_DIR }}"
-          rm -rf .obj *.o *.a qjs qjsc libquickjs.a || true
-
-          CROSS_CC="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-gcc"
-          CROSS_AR="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-ar"
-          CROSS_RANLIB="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-ranlib"
-          CROSS_STRIP="${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip"
-
-          CPPFLAGS="-I${{ env.SYSROOT }}/usr/include -I. -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
-          CFLAGS="--sysroot=${{ env.SYSROOT }} -Os -pipe -ffunction-sections -fdata-sections"
-          LDFLAGS="--sysroot=${{ env.SYSROOT }} -Wl,--gc-sections"
-
-          echo "Using CROSS_CC=${CROSS_CC}"
+          set -euo pipefail
+      
+          cd quickjs
+      
+          # sanity
+          pwd
+          ls -l
+          test -f Makefile
+      
+          rm -rf .obj *.o *.a qjs qjsc || true
+      
+          CROSS_CC="${TOOLCHAIN}/bin/aarch64-openwrt-linux-gcc"
+          CROSS_AR="${TOOLCHAIN}/bin/aarch64-openwrt-linux-ar"
+          CROSS_RANLIB="${TOOLCHAIN}/bin/aarch64-openwrt-linux-ranlib"
+          CROSS_STRIP="${TOOLCHAIN}/bin/aarch64-openwrt-linux-strip"
+      
+          CPPFLAGS="-I${SYSROOT}/usr/include -I. -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
+          CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections"
+          LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
+      
+          echo "Using CROSS_CC=$CROSS_CC"
           $CROSS_CC --version
+      
+          make -j$(nproc) \
+            CC="$CROSS_CC" \
+            AR="$CROSS_AR" \
+            RANLIB="$CROSS_RANLIB" \
+            STRIP="$CROSS_STRIP" \
+            CPPFLAGS="$CPPFLAGS" \
+            CFLAGS="$CFLAGS" \
+            LDFLAGS="$LDFLAGS"
+      
+          ls -lh qjs qjsc libquickjs.a
 
-          # Build library
-          make -j$(nproc) CC="$CROSS_CC" AR="$CROSS_AR" RANLIB="$CROSS_RANLIB" STRIP="$CROSS_STRIP" \
-            CPPFLAGS="$CPPFLAGS" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" libquickjs.a
-
-          # Build executables
-          make -j$(nproc) CC="$CROSS_CC" AR="$CROSS_AR" RANLIB="$CROSS_RANLIB" STRIP="$CROSS_STRIP" \
-            CPPFLAGS="$CPPFLAGS" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" qjs qjsc
-
-          ls -lh qjs qjsc libquickjs.a || true
 
       - name: Strip and verify
         run: |
