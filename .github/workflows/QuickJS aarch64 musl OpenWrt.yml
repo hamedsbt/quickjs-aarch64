@@ -138,7 +138,8 @@ jobs:
           CPPFLAGS="${CPPFLAGS}" \
           LDFLAGS="${LDFLAGS}" \
           QJSC=./host-qjsc \
-          CONFIG_CROSS=y
+          CONFIG_CROSS=y \
+          PROGS="qjs qjsc libquickjs.a"
 
         # show results
         ls -lah qjs qjsc libquickjs.a host-qjsc || true
