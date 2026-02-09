@@ -5,7 +5,7 @@ on:
 
 env:
   OPENWRT_SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/bcm27xx/bcm2711/openwrt-sdk-24.10.5-bcm27xx-bcm2711_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-  QUICKJS_DIR: "quickjs"                # path inside repo where quickjs source lives
+  
   QUICKJS_VERSION: "2025-09-13"         # informational only
 
 jobs:
@@ -82,7 +82,6 @@ jobs:
 
 
     - name: Phase 1 — build native host qjsc (x86_64)
-      working-directory: ${{ env.QUICKJS_DIR }}
       run: |
         set -euo pipefail
         # Ensure a clean start (upstream Makefile lacks a complete 'make clean')
@@ -104,7 +103,6 @@ jobs:
         file host-qjsc
 
     - name: Phase 2 — cross-build for OpenWrt aarch64
-      working-directory: ${{ env.QUICKJS_DIR }}
       env:
         TOOLCHAIN: ${{ env.TOOLCHAIN }}
         SYSROOT: ${{ env.SYSROOT }}
@@ -148,7 +146,6 @@ jobs:
         readelf -h qjs || true
 
     - name: Strip and package artifacts
-      working-directory: ${{ env.QUICKJS_DIR }}
       run: |
         set -euo pipefail
         # Use cross strip if available
