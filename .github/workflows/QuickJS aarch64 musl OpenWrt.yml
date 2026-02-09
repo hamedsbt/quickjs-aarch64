@@ -5,8 +5,7 @@ on:
 
 env:
   OPENWRT_SDK_URL: "https://downloads.openwrt.org/releases/24.10.5/targets/bcm27xx/bcm2711/openwrt-sdk-24.10.5-bcm27xx-bcm2711_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-  QUICKJS_DIR: "quickjs"                # path where quickjs source lives in the repo
-  QUICKJS_VERSION: "2025-09-13"         # informational only
+  QUICKJS_VERSION: "2025-09-13"  # informational only
 
 jobs:
   build:
@@ -41,7 +40,6 @@ jobs:
     - name: Configure toolchain & sysroot
       run: |
         set -euo pipefail
-        SDK_DIR="${{ env.SDK_DIR }}"
         STAGING="$PWD/$SDK_DIR/staging_dir"
 
         TOOLCHAIN_DIR="$(find "$STAGING" -maxdepth 1 -type d -name 'toolchain-aarch64*' | head -n1)"
@@ -57,88 +55,63 @@ jobs:
         echo "SYSROOT=$SYSROOT_DIR" >> $GITHUB_ENV
         echo "STAGING_DIR=$STAGING" >> $GITHUB_ENV
 
-        # Make toolchain available immediately in this step for verification
         export PATH="$TOOLCHAIN_DIR/bin:$PATH"
         aarch64-openwrt-linux-gcc --version || true
 
     - name: Apply safe local patches & write config.h
       run: |
         set -euo pipefail
-        # operate in repo root where quickjs directory exists
-        if [ ! -d "${{ env.QUICKJS_DIR }}" ]; then
-          echo "ERROR: quickjs dir '${{ env.QUICKJS_DIR }}' not found"
-          ls -la
-          exit 1
-        fi
 
         # Small safe fixes
-        sed -i 's/signal(SIGPIPE, SIG_IGN);/signal(SIGPIPE, (void (*)(int))SIG_IGN);/' "${{ env.QUICKJS_DIR }}/quickjs-libc.c" || true
-        grep -q 'extern char \*\*environ;' "${{ env.QUICKJS_DIR }}/quickjs-libc.c" || \
-          sed -i '/#include <stdlib.h>/a extern char **environ;' "${{ env.QUICKJS_DIR }}/quickjs-libc.c" || true
+        sed -i 's/signal(SIGPIPE, SIG_IGN);/signal(SIGPIPE, (void (*)(int))SIG_IGN);/' quickjs-libc.c || true
+        grep -q 'extern char \*\*environ;' quickjs-libc.c || \
+          sed -i '/#include <stdlib.h>/a extern char **environ;' quickjs-libc.c || true
 
-        # create config.h with string literal to avoid macro parsing issues
-        cat > "${{ env.QUICKJS_DIR }}/config.h" <<'EOF'
+        # create config.h
+        cat > config.h <<'EOF'
         #ifndef CONFIG_H
         #define CONFIG_H
         #define CONFIG_VERSION "0"
         #endif
         EOF
-        ls -l "${{ env.QUICKJS_DIR }}/config.h"
+        ls -l config.h
 
     - name: Phase 1 — build native host qjsc (isolated)
       run: |
         set -euo pipefail
-        SRC="${{ env.QUICKJS_DIR }}"
         HOSTBUILD="$(mktemp -d /tmp/quickjs-host-XXXX)"
         echo "Host build dir: $HOSTBUILD"
-        # copy source tree to isolated host-build to avoid polluting main tree with host .o/.obj
-        rsync -a --exclude='.git' "$SRC/" "$HOSTBUILD/"
+        rsync -a --exclude='.git' ./ "$HOSTBUILD/"
 
         cd "$HOSTBUILD"
-
-        # ensure a clean start for host build
         rm -rf .obj *.o *.a qjs qjsc host-qjsc libquickjs.a || true
 
-        # Build host qjsc (native x86_64)
         make -j$(nproc) CC=gcc qjsc
 
         if [ ! -x qjsc ]; then
-          echo "Host qjsc build failed (qjsc not present)"
+          echo "Host qjsc build failed"
           ls -la
           exit 1
         fi
 
-        # copy back only the host qjsc binary to the main source tree
-        cp qjsc "../${SRC}/host-qjsc"
-        chmod +x "../${SRC}/host-qjsc"
-        echo "Copied host-qjsc to ${SRC}/host-qjsc"
+        cp qjsc ../host-qjsc
+        chmod +x ../host-qjsc
+        file ../host-qjsc
 
-        # show the host binary type
-        file "../${SRC}/host-qjsc"
-
-        # cleanup host build directory
         cd /
         rm -rf "$HOSTBUILD"
 
-    - name: Phase 2 — cross-build for OpenWrt aarch64 (clean main tree)
+    - name: Phase 2 — cross-build for OpenWrt aarch64
       env:
         TOOLCHAIN: ${{ env.TOOLCHAIN }}
         SYSROOT: ${{ env.SYSROOT }}
         STAGING_DIR: ${{ env.STAGING_DIR }}
       run: |
         set -euo pipefail
-        SRC="${{ env.QUICKJS_DIR }}"
 
-        # ensure we operate in the main quickjs source and that host-qjsc exists
-        test -d "$SRC" || (echo "ERROR: $SRC not found" && exit 1)
-        test -x "${SRC}/host-qjsc" || (echo "ERROR: host-qjsc missing in $SRC" && ls -la "$SRC" && exit 1)
-
-        cd "$SRC"
-
-        # remove any build artefacts that might be from the host build
         rm -rf .obj *.o *.a qjs qjsc libquickjs.a examples/*.o examples/*.so examples/*.c || true
+        test -x ./host-qjsc || (echo "ERROR: host-qjsc missing" && exit 1)
 
-        # Toolchain binaries
         CROSS_PREFIX="${TOOLCHAIN}/bin"
         CROSS_CC="${CROSS_PREFIX}/aarch64-openwrt-linux-gcc"
         CROSS_AR="${CROSS_PREFIX}/aarch64-openwrt-linux-ar"
@@ -148,16 +121,11 @@ jobs:
         echo "Using CROSS_CC=${CROSS_CC}"
         "${CROSS_CC}" --version
 
-        # Compose flags: include config.h so CONFIG_VERSION is a string literal and not a numeric macro
         CFLAGS="--sysroot=${SYSROOT} -Os -pipe -ffunction-sections -fdata-sections -include config.h -D_GNU_SOURCE -D_DEFAULT_SOURCE"
         CPPFLAGS="-I${SYSROOT}/usr/include -I."
         LDFLAGS="--sysroot=${SYSROOT} -Wl,--gc-sections"
-
-        # export STAGING_DIR so gcc doesn't warn
         export STAGING_DIR="${STAGING_DIR}"
 
-        # IMPORTANT: limit Make to only build the core target artifacts (avoid examples)
-        # Pass QJSC=./host-qjsc so the makefile uses the host binary for any codegen steps.
         make -j$(nproc) \
           CC="${CROSS_CC}" \
           AR="${CROSS_AR}" \
@@ -170,7 +138,6 @@ jobs:
           CONFIG_CROSS=y \
           PROGS="qjs qjsc libquickjs.a"
 
-        # show results if present
         ls -lah qjs qjsc libquickjs.a host-qjsc || true
         file qjs qjsc host-qjsc || true
         readelf -h qjs || true
@@ -178,16 +145,13 @@ jobs:
     - name: Strip and package artifacts
       run: |
         set -euo pipefail
-        SRC="${{ env.QUICKJS_DIR }}"
-        cd "$SRC"
 
-        # Use cross strip if available
         if [ -x "${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip" ]; then
           "${{ env.TOOLCHAIN }}/bin/aarch64-openwrt-linux-strip" qjs qjsc || true
         fi
 
         mkdir -p artifacts
-        cp -a qjs qjsc libquickjs.a host-qjsc artifacts/ || true
+        cp -a qjs qjsc libquickjs.a host-qjsc artifacts/
         printf "QuickJS (built for OpenWrt aarch64)\n" > artifacts/README.txt
         ls -lh artifacts
 
@@ -195,4 +159,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: quickjs-openwrt-aarch64
-        path: quickjs/artifacts/
+        path: artifacts/
